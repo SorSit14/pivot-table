@@ -179,21 +179,40 @@
         tbody.appendChild(tr);
       });
 
-      // แถวสรุปค่าเฉลี่ยรวม
-      const tr=document.createElement("tr"); tr.className="summary";
-      const tdLabel=document.createElement("td"); tdLabel.textContent="ค่าเฉลี่ย"; tr.appendChild(tdLabel);
+      // แถวสรุปค่าเฉลี่ยรวม (แก้ไขเป็นคำนวณการเติบโตเฉลี่ย)
+      const tr=document.createElement("tr"); 
+      tr.className="summary";
+      const tdLabel=document.createElement("td"); 
+      tdLabel.textContent="การเติบโตเฉลี่ย"; 
+      tr.appendChild(tdLabel);
+
       stations.forEach(st=>{
         stationTrees[st].forEach(tree=>{
           const tdG=document.createElement("td");
           const tdH=document.createElement("td");
-          const g=summaryRow[st]&&summaryRow[st][tree]?calc(summaryRow[st][tree].gbh,"avg"):NaN;
-          const h=summaryRow[st]&&summaryRow[st][tree]?calc(summaryRow[st][tree].h,"avg"):NaN;
-          tdG.textContent=fmtNumber(g);
-          tdH.textContent=fmtNumber(h);
-          tr.appendChild(tdG); tr.appendChild(tdH);
+
+          let gGrowth=NaN, hGrowth=NaN;
+
+          if(summaryRow[st] && summaryRow[st][tree]){
+            const gArr = summaryRow[st][tree].gbh;
+            const hArr = summaryRow[st][tree].h;
+
+            if(gArr.length>1){
+              gGrowth = (gArr[gArr.length-1] - gArr[0]) / (gArr.length-1);
+            }
+            if(hArr.length>1){
+              hGrowth = (hArr[hArr.length-1] - hArr[0]) / (hArr.length-1);
+            }
+          }
+
+          tdG.textContent = fmtNumber(gGrowth);
+          tdH.textContent = fmtNumber(hGrowth);
+          tr.appendChild(tdG); 
+          tr.appendChild(tdH);
         });
       });
       tbody.appendChild(tr);
+
     }
     agg.onchange=renderBody;
     renderBody();
