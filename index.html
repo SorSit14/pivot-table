@@ -1,95 +1,177 @@
-function renderTable(months, stations, pivot) {
-  const thead = document.getElementById('thead');
-  const tbody = document.getElementById('tbody');
-  thead.innerHTML = '';
-  tbody.innerHTML = '';
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <title>Pivot: สถานีควบคุมไฟป่า (GBH / ความสูง)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: "TH Sarabun New", Arial, sans-serif; background:#f6fff6; padding:18px; color:#123; }
+    h1 { color:#174b2a; }
+    table { width:100%; border-collapse:collapse; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,0.12); background:#fff; }
+    th, td { border:1px solid #cfcfcf; padding:6px 8px; font-size:13px; }
+    thead th { background:#1c4526; color:#fff; }
+    thead tr.level2 th { background:#2e6a42; }
+    thead tr.level3 th { background:#4a8a60; color:#fff; }
+    tbody tr:nth-child(even) { background:#fbfdfb; }
+    td.empty { color:#999; }
+    .note { margin-top:8px; color:#555; font-size:13px; }
+    .controls { margin-bottom:10px; display:flex; gap:8px; align-items:center; }
+    select { padding:6px; }
+  </style>
+</head>
+<body>
+  <h1>รายงาน (Pivot) — สถานีควบคุมไฟป่า</h1>
 
-  // ========== Header 3 ชั้น ==========
-  const tr1 = document.createElement('tr'); // row 1: เดือน-ปี + สถานี
-  const tr2 = document.createElement('tr'); // row 2: ต้นที่
-  const tr3 = document.createElement('tr'); // row 3: GBH + ความสูง
+  <div class="controls">
+    <label>Aggregation:
+      <select id="agg">
+        <option value="avg">Average (ค่าเฉลี่ย)</option>
+        <option value="sum">Sum (รวม)</option>
+        <option value="last">Last (ค่าใหม่สุด)</option>
+      </select>
+    </label>
+  </div>
 
-  // คอลัมน์แรก (เดือน-ปี)
-  const thDate = document.createElement('th');
-  thDate.rowSpan = 3;
-  thDate.textContent = 'เดือน-ปี';
-  tr1.appendChild(thDate);
+  <div id="table-wrap">
+    <table id="pivot-table">
+      <thead id="thead"></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
 
-  stations.forEach(st => {
-    // หาจำนวนต้นสูงสุดที่สถานีนี้มี
-    const maxTrees = Math.max(...months.map(m => {
-      return pivot[m][st] ? Object.keys(pivot[m][st]).length : 0;
-    }));
+  <script>
+  // === CONFIG ===
+  const sheetId = "1JacSgbSOWejInZHZrcft8zTWkVdTUvz8bQexL5Lnqus";  // Spreadsheet ID
+  const sheetName = "Sheet1"; // ชื่อแท็บ
+  const apiKey = "AIzaSyBV4U4vhac2gOC9efcYanjMBq2IJ0oHuys";       // API Key
+  // ==============
 
-    // หัวสถานี
-    const thStation = document.createElement('th');
-    thStation.colSpan = maxTrees * 2; // ต้นละ 2 คอลัมน์ (GBH+ความสูง)
-    thStation.textContent = st;
-    tr1.appendChild(thStation);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheetName)}?key=${apiKey}`;
 
-    // หัวต้นที่
-    for (let t = 1; t <= maxTrees; t++) {
-      const thTree = document.createElement('th');
-      thTree.colSpan = 2;
-      thTree.textContent = "ต้นที่ " + t;
-      tr2.appendChild(thTree);
+  function parseNumber(v) {
+    if (v === undefined || v === null) return NaN;
+    v = String(v).trim().replace(/,/g,'');
+    if (v === '' || v === '-') return NaN;
+    return parseFloat(v);
+  }
+  function normalizeMonthYear(raw) {
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (!isNaN(d)) return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    return raw;
+  }
+  function fmtNumber(v, d=2){ return (v===null||isNaN(v))?'':(+v).toFixed(d).replace(/\.00$/,''); }
 
-      // หัวย่อย GBH + ความสูง
-      const thGBH = document.createElement('th'); thGBH.textContent = "GBH";
-      const thH   = document.createElement('th'); thH.textContent = "ความสูง";
-      tr3.appendChild(thGBH);
-      tr3.appendChild(thH);
-    }
-  });
+  fetch(url)
+    .then(r => r.json())
+    .then(json => {
+      const values = json.values || [];
+      const headers = values[0].map(h => h.trim());
+      const rows = values.slice(1);
 
-  thead.appendChild(tr1);
-  thead.appendChild(tr2);
-  thead.appendChild(tr3);
+      const idxStation = headers.findIndex(h=>h.includes("สถานี")||h.includes("หน่วยงาน"));
+      const idxTree = headers.findIndex(h=>h.includes("ต้นที่"));
+      const idxGBH = headers.findIndex(h=>h.toLowerCase().includes("gbh")||h.includes("ความโต"));
+      const idxH = headers.findIndex(h=>h.includes("ความสูง"));
+      const idxDate = headers.findIndex(h=>h.includes("วัน")||h.toLowerCase().includes("date"));
 
-  // ========== Body ==========
-  const aggSelect = document.getElementById('agg');
-  const aggMode = () => aggSelect.value;
+      const pivot = {};
+      const stationsOrder = [];
+      const stationTrees = {}; // เก็บจำนวนต้นต่อสถานี
 
-  aggSelect.onchange = () => {
-    tbody.innerHTML = '';
-    months.forEach(month => {
-      const tr = document.createElement('tr');
-      const tdMonth = document.createElement('td');
-      tdMonth.textContent = month;
-      tr.appendChild(tdMonth);
+      rows.forEach((r,i)=>{
+        const station = r[idxStation]||"";
+        const tree = r[idxTree]||"1";
+        const gbh = parseNumber(r[idxGBH]);
+        const h = parseNumber(r[idxH]);
+        const date = normalizeMonthYear(r[idxDate]);
 
-      stations.forEach(st => {
-        const trees = pivot[month][st] || {};
-        const maxTrees = Math.max(...months.map(m => {
-          return pivot[m][st] ? Object.keys(pivot[m][st]).length : 0;
-        }));
+        if (!station || !date) return;
+        if (!stationsOrder.includes(station)) stationsOrder.push(station);
+        if (!stationTrees[station]) stationTrees[station]=[];
+        if (!stationTrees[station].includes(tree)) stationTrees[station].push(tree);
 
-        for (let t = 1; t <= maxTrees; t++) {
-          const info = trees[t] || null;
-          let vGBH = '', vH = '';
+        if (!pivot[date]) pivot[date]={};
+        if (!pivot[date][station]) pivot[date][station]={};
+        if (!pivot[date][station][tree]) pivot[date][station][tree]={gbh:[],h:[]};
 
-          if (info) {
-            if (aggMode() === 'avg') {
-              vGBH = info.cntGBH ? fmtNumber(info.sumGBH / info.cntGBH, 2) : '';
-              vH   = info.cntH   ? fmtNumber(info.sumH   / info.cntH, 2)   : '';
-            } else if (aggMode() === 'sum') {
-              vGBH = info.cntGBH ? fmtNumber(info.sumGBH, 2) : '';
-              vH   = info.cntH   ? fmtNumber(info.sumH, 2)   : '';
-            } else if (aggMode() === 'last') {
-              vGBH = info.lastGBH !== null ? fmtNumber(info.lastGBH, 2) : '';
-              vH   = info.lastH   !== null ? fmtNumber(info.lastH, 2)   : '';
-            }
-          }
-
-          const tdG = document.createElement('td'); tdG.textContent = vGBH || ''; if (!vGBH) tdG.className = 'empty';
-          const tdH = document.createElement('td'); tdH.textContent = vH || ''; if (!vH) tdH.className = 'empty';
-          tr.appendChild(tdG);
-          tr.appendChild(tdH);
-        }
+        if (!isNaN(gbh)) pivot[date][station][tree].gbh.push(gbh);
+        if (!isNaN(h)) pivot[date][station][tree].h.push(h);
       });
-      tbody.appendChild(tr);
-    });
-  };
 
-  aggSelect.dispatchEvent(new Event('change'));
-}
+      const months = Object.keys(pivot).sort();
+      renderTable(months, stationsOrder, stationTrees, pivot);
+    });
+
+  function renderTable(months, stations, stationTrees, pivot){
+    const thead=document.getElementById("thead");
+    const tbody=document.getElementById("tbody");
+    thead.innerHTML=""; tbody.innerHTML="";
+
+    // แถวหัวใหญ่ (สถานี)
+    const tr1=document.createElement("tr");
+    const thDate=document.createElement("th"); thDate.rowSpan=3; thDate.textContent="เดือน-ปี"; tr1.appendChild(thDate);
+    stations.forEach(st=>{
+      const th=document.createElement("th");
+      th.colSpan=stationTrees[st].length*2;
+      th.textContent=st;
+      tr1.appendChild(th);
+    });
+    thead.appendChild(tr1);
+
+    // แถวต้นไม้
+    const tr2=document.createElement("tr"); tr2.className="level2";
+    stations.forEach(st=>{
+      stationTrees[st].forEach(tree=>{
+        const th=document.createElement("th");
+        th.colSpan=2;
+        th.textContent="ต้นที่ "+tree;
+        tr2.appendChild(th);
+      });
+    });
+    thead.appendChild(tr2);
+
+    // แถว GBH / H
+    const tr3=document.createElement("tr"); tr3.className="level3";
+    stations.forEach(st=>{
+      stationTrees[st].forEach(()=>{
+        const th1=document.createElement("th"); th1.textContent="GBH"; tr3.appendChild(th1);
+        const th2=document.createElement("th"); th2.textContent="ความสูง"; tr3.appendChild(th2);
+      });
+    });
+    thead.appendChild(tr3);
+
+    // สร้างแถวข้อมูล
+    const agg=document.getElementById("agg");
+    function calc(arr,mode){
+      if(!arr||arr.length===0) return "";
+      if(mode==="avg") return fmtNumber(arr.reduce((a,b)=>a+b,0)/arr.length);
+      if(mode==="sum") return fmtNumber(arr.reduce((a,b)=>a+b,0));
+      if(mode==="last") return fmtNumber(arr[arr.length-1]);
+    }
+    function renderBody(){
+      tbody.innerHTML="";
+      months.forEach(m=>{
+        const tr=document.createElement("tr");
+        const tdMonth=document.createElement("td"); tdMonth.textContent=m; tr.appendChild(tdMonth);
+        stations.forEach(st=>{
+          stationTrees[st].forEach(tree=>{
+            const info=pivot[m]&&pivot[m][st]&&pivot[m][st][tree]?pivot[m][st][tree]:null;
+            const tdG=document.createElement("td");
+            const tdH=document.createElement("td");
+            if(info){
+              tdG.textContent=calc(info.gbh,agg.value)||""; 
+              tdH.textContent=calc(info.h,agg.value)||"";
+            } else { tdG.className="empty"; tdH.className="empty"; }
+            tr.appendChild(tdG); tr.appendChild(tdH);
+          });
+        });
+        tbody.appendChild(tr);
+      });
+    }
+    agg.onchange=renderBody;
+    renderBody();
+  }
+  </script>
+</body>
+</html>
