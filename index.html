@@ -1,262 +1,73 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-  <meta charset="utf-8" />
-  <title>Pivot: สถานีควบคุมไฟป่า (GBH / ความสูง)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    body { font-family: "TH Sarabun New", Arial, sans-serif; background:#f6fff6; padding:18px; color:#123; }
-    h1 { color:#174b2a; }
-    table { width:100%; border-collapse:collapse; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,0.12); background:#fff; }
-    th, td { border:1px solid #cfcfcf; padding:6px 8px; font-size:13px; }
-    thead th { background:#1c4526; color:#fff; }
-    thead tr.level2 th { background:#2e6a42; }
-    tbody tr:nth-child(even) { background:#fbfdfb; }
-    td.empty { color:#999; }
-    .note { margin-top:8px; color:#555; font-size:13px; }
-    .controls { margin-bottom:10px; display:flex; gap:8px; align-items:center; }
-    select { padding:6px; }
-  </style>
-</head>
-<body>
-  <h1>รายงาน (Pivot) — สถานีควบคุมไฟป่า</h1>
+function renderTable(months, stations, pivot) {
+  const thead = document.getElementById('thead');
+  const tbody = document.getElementById('tbody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
 
-  <div class="controls">
-    <label>Aggregation:
-      <select id="agg">
-        <option value="avg">Average (ค่าเฉลี่ย)</option>
-        <option value="sum">Sum (รวม)</option>
-        <option value="last">Last (ค่าใหม่สุด)</option>
-      </select>
-    </label>
-    <span class="note">* กรอกรายละเอียดด้านล่าง แล้วโหลดหน้าใหม่หรือกด Refresh เมื่อแก้ค่า</span>
-  </div>
+  // ========== Header 3 ชั้น ==========
+  const tr1 = document.createElement('tr'); // row 1: เดือน-ปี + สถานี
+  const tr2 = document.createElement('tr'); // row 2: ต้นที่
+  const tr3 = document.createElement('tr'); // row 3: GBH + ความสูง
 
-  <div id="table-wrap">
-    <table id="pivot-table">
-      <thead id="thead"></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-  </div>
+  // คอลัมน์แรก (เดือน-ปี)
+  const thDate = document.createElement('th');
+  thDate.rowSpan = 3;
+  thDate.textContent = 'เดือน-ปี';
+  tr1.appendChild(thDate);
 
-  <script>
-  /*********************
-   *  === CONFIG ===
-   *  แก้ 3 ค่านี้ให้เป็นของคุณ
-   *********************/
-  const sheetId = "1JacSgbSOWejInZHZrcft8zTWkVdTUvz8bQexL5Lnqus";      // ← ใส่ Spreadsheet ID
-  const sheetName = "Sheet1";                // ← ใส่ชื่อแท็บ (sheet) ของคุณ
-  const apiKey = "AIzaSyBV4U4vhac2gOC9efcYanjMBq2IJ0oHuys";        // ← ใส่ Google API Key (เปิด Google Sheets API)
+  stations.forEach(st => {
+    // หาจำนวนต้นสูงสุดที่สถานีนี้มี
+    const maxTrees = Math.max(...months.map(m => {
+      return pivot[m][st] ? Object.keys(pivot[m][st]).length : 0;
+    }));
 
-  // END CONFIG
-  /*********************/
+    // หัวสถานี
+    const thStation = document.createElement('th');
+    thStation.colSpan = maxTrees * 2; // ต้นละ 2 คอลัมน์ (GBH+ความสูง)
+    thStation.textContent = st;
+    tr1.appendChild(thStation);
 
-  if (!sheetId || !sheetName || !apiKey) {
-    document.getElementById('table-wrap').innerHTML =
-      '<div style="color:darkred">กรุณาแก้ค่า sheetId / sheetName / apiKey ในโค้ดก่อน</div>';
-    throw new Error('Please configure sheetId, sheetName, apiKey');
-  }
+    // หัวต้นที่
+    for (let t = 1; t <= maxTrees; t++) {
+      const thTree = document.createElement('th');
+      thTree.colSpan = 2;
+      thTree.textContent = "ต้นที่ " + t;
+      tr2.appendChild(thTree);
 
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(sheetName)}?key=${apiKey}`;
-
-  // Helper: find header index with several possible names
-  function findIndex(headers, candidates){
-    candidates = Array.isArray(candidates) ? candidates : [candidates];
-    for (let c of candidates) {
-      const idx = headers.findIndex(h => h && h.toString().toLowerCase().includes(c.toString().toLowerCase()));
-      if (idx >= 0) return idx;
+      // หัวย่อย GBH + ความสูง
+      const thGBH = document.createElement('th'); thGBH.textContent = "GBH";
+      const thH   = document.createElement('th'); thH.textContent = "ความสูง";
+      tr3.appendChild(thGBH);
+      tr3.appendChild(thH);
     }
-    return -1;
-  }
+  });
 
-  function parseNumber(v) {
-    if (v === undefined || v === null) return NaN;
-    v = String(v).trim().replace(/,/g,'').replace(/\s+/g,'');
-    if (v === '' || v === '-' ) return NaN;
-    const n = parseFloat(v);
-    return isNaN(n) ? NaN : n;
-  }
+  thead.appendChild(tr1);
+  thead.appendChild(tr2);
+  thead.appendChild(tr3);
 
-  // normalize month-year into "YYYY-MM" (returns null if cannot)
-  function normalizeMonthYear(raw) {
-    if (!raw) return null;
-    raw = String(raw).trim();
-    if (raw === '-' || raw === '') return null;
+  // ========== Body ==========
+  const aggSelect = document.getElementById('agg');
+  const aggMode = () => aggSelect.value;
 
-    // already YYYY-MM or YYYY-M
-    if (/^\d{4}-\d{1,2}$/.test(raw)) {
-      const [y,m] = raw.split('-');
-      return `${y}-${String(m).padStart(2,'0')}`;
-    }
-
-    // YYYY/MM or YYYY/MM/DD
-    if (/^\d{4}\/\d{1,2}(\/\d{1,2})?$/.test(raw)) {
-      const parts = raw.split('/');
-      return `${parts[0]}-${String(parts[1]).padStart(2,'0')}`;
-    }
-
-    // detect mm/dd/yyyy or dd/mm/yyyy -> decide by first part (if first <=12 treat as mm)
-    if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
-      const p = raw.split('/');
-      let a = parseInt(p[0],10), b = parseInt(p[1],10), y = p[2];
-      if (y.length === 2) y = '20' + y;
-      // if first part <=12 treat as month/day/year (common in exported sheets like 4/21/2025)
-      let month = (a <= 12) ? a : b;
-      return `${y}-${String(month).padStart(2,'0')}`;
-    }
-
-    // try Date parse fallback
-    const d = new Date(raw);
-    if (!isNaN(d)) {
-      const y = d.getFullYear();
-      const m = d.getMonth() + 1;
-      return `${y}-${String(m).padStart(2,'0')}`;
-    }
-    return null;
-  }
-
-  // Round helper
-  function fmtNumber(v, decimals=2) {
-    if (v === null || v === undefined || isNaN(v)) return '';
-    return (+v).toFixed(decimals).replace(/\.00$/,''); // remove .00 if integer
-  }
-
-  // Build pivot after fetching
-  fetch(url)
-    .then(r => {
-      if (!r.ok) throw new Error('Google Sheets API error: status ' + r.status);
-      return r.json();
-    })
-    .then(json => {
-      const values = json.values || [];
-      if (!values.length) {
-        document.getElementById('table-wrap').innerHTML = '<div>ไม่มีข้อมูลในชีท (หรือช่วงที่ดึง)</div>';
-        return;
-      }
-
-      const headers = values[0].map(h => h ? h.toString().trim() : '');
-      const rows = values.slice(1);
-
-      // try to find columns (flexible matching)
-      const idxStation = findIndex(headers, ['หน่วยงาน','หน่วย งาน','หน่วยงาน']);
-      const idxGBH = findIndex(headers, ['ความโต','gbh','ความโต (GBH)','ความโต (GBH) (เซนติเมตร)','ความโต (GBH) (เซนติเมตร)']);
-      const idxHeight = findIndex(headers, ['ความสูง','height','ความสูง (เมตร)']);
-      const idxMonthYear = findIndex(headers, ['เดือน-ปี','เดือน - ปี','month-year']);
-      const idxDate = findIndex(headers, ['วัน/เดือน/ปี','วัน/เดือน/ปี ที่จัดกิจกรรม','date']);
-
-      if (idxStation < 0) {
-        alert('ไม่พบคอลัมน์ "หน่วยงาน" ใน header ของชีท — ตรวจชื่อคอลัมน์ในชีทให้ตรง');
-        console.warn('headers', headers);
-      }
-
-      if (idxGBH < 0 && idxHeight < 0) {
-        alert('ไม่พบคอลัมน์ "GBH" หรือ "ความสูง" ใน header ของชีท — ตรวจชื่อคอลัมน์ในชีทให้ตรง');
-        console.warn('headers', headers);
-      }
-
-      // pivot data structure: pivot[month][station] = { sumGBH, cntGBH, sumH, cntH, lastGBH, lastH, lastTimestamp }
-      const pivot = {};
-      const stationsOrder = []; // keep order of first appearance
-
-      rows.forEach((r, rowIndex) => {
-        const station = (r[idxStation] || '').toString().trim();
-        if (!station) return; // skip rows without station
-
-        if (!stationsOrder.includes(station)) stationsOrder.push(station);
-
-        // get month-year normalized (use month-year column if present, else parse date)
-        const rawMonth = (idxMonthYear >= 0 && r[idxMonthYear] !== undefined) ? r[idxMonthYear] : (idxDate >= 0 ? r[idxDate] : '');
-        const my = normalizeMonthYear(rawMonth);
-        if (!my) return; // skip if cannot determine month-year
-
-        if (!pivot[my]) pivot[my] = {};
-        if (!pivot[my][station]) pivot[my][station] = { sumGBH:0, cntGBH:0, sumH:0, cntH:0, lastGBH:null, lastH:null, lastRow: -1 };
-
-        // parse numbers
-        const rawGBH = (idxGBH >= 0) ? r[idxGBH] : undefined;
-        const rawH = (idxHeight >= 0) ? r[idxHeight] : undefined;
-        const gbh = parseNumber(rawGBH);
-        const h = parseNumber(rawH);
-
-        if (!isNaN(gbh)) {
-          pivot[my][station].sumGBH += gbh;
-          pivot[my][station].cntGBH += 1;
-          pivot[my][station].lastGBH = gbh;
-          pivot[my][station].lastRow = rowIndex;
-        }
-        if (!isNaN(h)) {
-          pivot[my][station].sumH += h;
-          pivot[my][station].cntH += 1;
-          pivot[my][station].lastH = h;
-          pivot[my][station].lastRow = rowIndex;
-        }
-      });
-
-      // sort months chronologically (ascending)
-      const months = Object.keys(pivot).sort((a,b) => {
-        const da = new Date(a + '-01');
-        const db = new Date(b + '-01');
-        return da - db;
-      });
-
-      renderTable(months, stationsOrder, pivot);
-    })
-    .catch(err => {
-      console.error('Error fetching/processing sheet:', err);
-      document.getElementById('table-wrap').innerHTML = '<div style="color:darkred">เกิดข้อผิดพลาดขณะดึงข้อมูล (ดู console)</div>';
-    });
-
-  // render function: builds multi-level header and body
-  function renderTable(months, stations, pivot) {
-    const thead = document.getElementById('thead');
-    const tbody = document.getElementById('tbody');
-    thead.innerHTML = '';
+  aggSelect.onchange = () => {
     tbody.innerHTML = '';
+    months.forEach(month => {
+      const tr = document.createElement('tr');
+      const tdMonth = document.createElement('td');
+      tdMonth.textContent = month;
+      tr.appendChild(tdMonth);
 
-    // first header row
-    const tr1 = document.createElement('tr');
-    const thDate = document.createElement('th');
-    thDate.rowSpan = 2;
-    thDate.textContent = 'เดือน-ปี';
-    tr1.appendChild(thDate);
-    stations.forEach(st => {
-      const th = document.createElement('th');
-      th.colSpan = 2;
-      th.textContent = st;
-      tr1.appendChild(th);
-    });
-    thead.appendChild(tr1);
+      stations.forEach(st => {
+        const trees = pivot[month][st] || {};
+        const maxTrees = Math.max(...months.map(m => {
+          return pivot[m][st] ? Object.keys(pivot[m][st]).length : 0;
+        }));
 
-    // second header row (sub columns)
-    const tr2 = document.createElement('tr');
-    tr2.className = 'level2';
-    stations.forEach(() => {
-      const thA = document.createElement('th'); thA.textContent = 'GBH';
-      const thB = document.createElement('th'); thB.textContent = 'ความสูง';
-      tr2.appendChild(thA);
-      tr2.appendChild(thB);
-    });
-    thead.appendChild(tr2);
-
-    // build body rows
-    const aggSelect = document.getElementById('agg');
-    const aggMode = () => aggSelect.value;
-
-    // re-render when aggregation changed
-    aggSelect.onchange = () => {
-      // rebuild body with same months/stations/pivot
-      tbody.innerHTML = '';
-      months.forEach(month => {
-        const tr = document.createElement('tr');
-        const tdMonth = document.createElement('td');
-        tdMonth.textContent = month;
-        tr.appendChild(tdMonth);
-
-        stations.forEach(st => {
-          const info = (pivot[month] && pivot[month][st]) ? pivot[month][st] : null;
-
-          // compute values based on agg mode
+        for (let t = 1; t <= maxTrees; t++) {
+          const info = trees[t] || null;
           let vGBH = '', vH = '';
+
           if (info) {
             if (aggMode() === 'avg') {
               vGBH = info.cntGBH ? fmtNumber(info.sumGBH / info.cntGBH, 2) : '';
@@ -265,8 +76,8 @@
               vGBH = info.cntGBH ? fmtNumber(info.sumGBH, 2) : '';
               vH   = info.cntH   ? fmtNumber(info.sumH, 2)   : '';
             } else if (aggMode() === 'last') {
-              vGBH = (info.lastGBH !== null && info.lastGBH !== undefined) ? fmtNumber(info.lastGBH, 2) : '';
-              vH   = (info.lastH   !== null && info.lastH   !== undefined) ? fmtNumber(info.lastH, 2)   : '';
+              vGBH = info.lastGBH !== null ? fmtNumber(info.lastGBH, 2) : '';
+              vH   = info.lastH   !== null ? fmtNumber(info.lastH, 2)   : '';
             }
           }
 
@@ -274,15 +85,11 @@
           const tdH = document.createElement('td'); tdH.textContent = vH || ''; if (!vH) tdH.className = 'empty';
           tr.appendChild(tdG);
           tr.appendChild(tdH);
-        });
-
-        tbody.appendChild(tr);
+        }
       });
-    };
+      tbody.appendChild(tr);
+    });
+  };
 
-    // trigger initial render
-    aggSelect.dispatchEvent(new Event('change'));
-  }
-  </script>
-</body>
-</html>
+  aggSelect.dispatchEvent(new Event('change'));
+}
