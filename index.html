@@ -17,6 +17,7 @@
     .note { margin-top:8px; color:#555; font-size:13px; }
     .controls { margin-bottom:10px; display:flex; gap:8px; align-items:center; }
     select { padding:6px; }
+    tr.summary { font-weight:bold; background:#e0ffe0; }
   </style>
 </head>
 <body>
@@ -77,9 +78,9 @@
 
       const pivot = {};
       const stationsOrder = [];
-      const stationTrees = {}; // เก็บจำนวนต้นต่อสถานี
+      const stationTrees = {};
 
-      rows.forEach((r,i)=>{
+      rows.forEach(r=>{
         const station = r[idxStation]||"";
         const tree = r[idxTree]||"1";
         const gbh = parseNumber(r[idxGBH]);
@@ -141,16 +142,19 @@
     });
     thead.appendChild(tr3);
 
-    // สร้างแถวข้อมูล
+    // helper คำนวณ
     const agg=document.getElementById("agg");
     function calc(arr,mode){
-      if(!arr||arr.length===0) return "";
-      if(mode==="avg") return fmtNumber(arr.reduce((a,b)=>a+b,0)/arr.length);
-      if(mode==="sum") return fmtNumber(arr.reduce((a,b)=>a+b,0));
-      if(mode==="last") return fmtNumber(arr[arr.length-1]);
+      if(!arr||arr.length===0) return NaN;
+      if(mode==="avg") return arr.reduce((a,b)=>a+b,0)/arr.length;
+      if(mode==="sum") return arr.reduce((a,b)=>a+b,0);
+      if(mode==="last") return arr[arr.length-1];
     }
+
     function renderBody(){
       tbody.innerHTML="";
+      const summaryRow={};
+
       months.forEach(m=>{
         const tr=document.createElement("tr");
         const tdMonth=document.createElement("td"); tdMonth.textContent=m; tr.appendChild(tdMonth);
@@ -160,14 +164,36 @@
             const tdG=document.createElement("td");
             const tdH=document.createElement("td");
             if(info){
-              tdG.textContent=calc(info.gbh,agg.value)||""; 
-              tdH.textContent=calc(info.h,agg.value)||"";
+              const g=calc(info.gbh,agg.value);
+              const h=calc(info.h,agg.value);
+              tdG.textContent=fmtNumber(g); 
+              tdH.textContent=fmtNumber(h);
+              if(!summaryRow[st]) summaryRow[st]={};
+              if(!summaryRow[st][tree]) summaryRow[st][tree]={gbh:[],h:[]};
+              if(!isNaN(g)) summaryRow[st][tree].gbh.push(g);
+              if(!isNaN(h)) summaryRow[st][tree].h.push(h);
             } else { tdG.className="empty"; tdH.className="empty"; }
             tr.appendChild(tdG); tr.appendChild(tdH);
           });
         });
         tbody.appendChild(tr);
       });
+
+      // แถวสรุปค่าเฉลี่ยรวม
+      const tr=document.createElement("tr"); tr.className="summary";
+      const tdLabel=document.createElement("td"); tdLabel.textContent="ค่าเฉลี่ย"; tr.appendChild(tdLabel);
+      stations.forEach(st=>{
+        stationTrees[st].forEach(tree=>{
+          const tdG=document.createElement("td");
+          const tdH=document.createElement("td");
+          const g=summaryRow[st]&&summaryRow[st][tree]?calc(summaryRow[st][tree].gbh,"avg"):NaN;
+          const h=summaryRow[st]&&summaryRow[st][tree]?calc(summaryRow[st][tree].h,"avg"):NaN;
+          tdG.textContent=fmtNumber(g);
+          tdH.textContent=fmtNumber(h);
+          tr.appendChild(tdG); tr.appendChild(tdH);
+        });
+      });
+      tbody.appendChild(tr);
     }
     agg.onchange=renderBody;
     renderBody();
